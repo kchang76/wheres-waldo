@@ -42,16 +42,32 @@ end
 
 
 function flat_ds = flatten_ds(ds_collection)
-    image_ds = ds_collection{1}.UnderlyingDatastores{1};
-    bl_ds = ds_collection{1}.UnderlyingDatastores{2};
-
-    for i=2:length(ds_collection)
-        new_img_ds = ds_collection{i}.UnderlyingDatastores{1};
-        new_bl_ds = ds_collection{1}.UnderlyingDatastores{2};
+    for i=1:length(ds_collection)
+        ds_collection{i} = ds_collection{i}.UnderlyingDatastores{1};
     end
 
-    % TO DO finish function
-    flat_ds = None;
+    image_ds = ds_collection{1}.UnderlyingDatastores{1};
+    for i=2:length(ds_collection)
+        sub_image_ds = ds_collection{i}.UnderlyingDatastores{1};
+        for j=1:length(sub_image_ds.Files)
+            image_ds.Files{end+1} = sub_image_ds.Files{j};
+        end
+    end
+
+    Waldo=[];
+    bl_ds_tbl = table(Waldo);
+    for i=1:length(ds_collection)
+        sub_bl_ds = ds_collection{i}.UnderlyingDatastores{2};
+        for j=1:length(sub_bl_ds.LabelData)
+            Waldo = {sub_bl_ds.LabelData{j,1}};
+            subtable = table(Waldo);
+            bl_ds_tbl = [bl_ds_tbl;subtable];
+        end
+    end
+
+    bl_ds = boxLabelDatastore(bl_ds_tbl);
+    flat_ds = combine(image_ds,bl_ds);
+    flat_ds = shuffle(flat_ds);
 end
 
 
