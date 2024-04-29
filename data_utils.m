@@ -7,6 +7,7 @@ function utils = data_utils()
     utils.train_validation_test_split = @train_validation_test_split;
     utils.get_metrics_report = @get_metrics_report;
     utils.chunk_image = @chunk_image;
+    utils.chunk_image_ds = @chunk_image_ds;
 end
 
 % Accepts image ds/bounding label data store and performs data augmentation
@@ -198,18 +199,6 @@ function [] = chunk_image(filepath, source, chunk_size)
     im = imread(filepath);
     im_size = size(im);
 
-    % Decrease resolution if image is too large
-    % if (im_size(1) > 1400)
-    %     targetSize = [1400 NaN];
-    %     im = imresize(im,targetSize);
-    %     im_size = size(im);
-    % end
-    % if (im_size(2) > 2200)
-    %     targetSize = [NaN 2200];
-    %     im = imresize(im,targetSize);
-    %     im_size = size(im);
-    % end
-
     % Save image as new subsections of chunk_size by chunk_size
     for row_index=1:ceil(im_size(1)/chunk_size)
         r_end = min((row_index)*chunk_size, im_size(1));
@@ -225,3 +214,89 @@ function [] = chunk_image(filepath, source, chunk_size)
     end
 end
 
+function chunked_ds = chunk_image_ds(ds, chunk_size)
+    if ~exist('chunk_size','var')
+          chunk_size = 128;
+    end
+    img_ds = ds.UnderlyingDatastores{1};
+    bl_ds = ds.UnderlyingDatastores{2};
+
+    mkdir(sprintf("dataset/%i/full_scene_ds", chunk_size));
+    delete(sprintf("dataset/%i/full_scene_ds/*.jpg", chunk_size));
+
+    chunk_bl_table = table({[0,0,0,0]},'VariableNames',string(bl_ds.LabelData{1,2}));
+    chunk_bl_table(1,:) = [];
+    current_folder = pwd;
+
+    for file_index=1:length(img_ds.Files)
+        filepath = img_ds.Files{file_index};
+        [~,filename,~] = fileparts(filepath);
+        im = imread(filepath);
+        im_size = size(im);
+
+        % Save image as new subsections of chunk_size by chunk_size
+        for row_index=1:ceil(im_size(1)/chunk_size)
+            r_end = min((row_index)*chunk_size, im_size(1));
+            r_start = r_end - chunk_size + 1;
+    
+            for col_index=1:ceil(im_size(2)/chunk_size)
+                c_end = min((col_index)*chunk_size, im_size(2));
+                c_start = c_end - chunk_size + 1;
+   
+                % check if boundary label exists for file and if it is in
+                % this section (at least 40% of the area of boundary is in
+                % section
+                if (any(bl_ds.LabelData{file_index,1} ~= [0 0 0 0]))
+                    [overlap, intersect] = area_overlap([c_start, r_start, chunk_size], bl_ds.LabelData{file_index,1});
+                    if overlap >=0.4                        
+                        % write image subsection to file (so we can debug later)
+                        im_subsection = im(r_start:r_end, c_start:c_end, :);
+                        imwrite(im_subsection, sprintf("dataset/%i/full_scene_ds/%s_%i_%i.jpg", chunk_size,filename,row_index,col_index));
+                    
+                        % store bounding label
+                        chunk_bl_table = [chunk_bl_table;{intersect;}];
+                    end
+                end
+            end
+        end
+    end
+
+    chunk_img_ds = imageDatastore(sprintf("dataset/%i/full_scene_ds", chunk_size));
+    chunk_bl_ds = boxLabelDatastore(chunk_bl_table);
+    chunked_ds = combine(chunk_img_ds,chunk_bl_ds);
+end
+
+
+function [overlap_percent, intersection_points] = area_overlap(square, rect)
+    overlap_percent = 0.0;
+    intersection_points = [0 0 0 0];
+
+    x1 = square(1);
+    y1 = square(2);
+    s_length = square(3);
+    s = polyshape([x1, x1, x1+s_length-1, x1+s_length-1], [y1, y1+s_length-1, y1+s_length-1, y1]);
+
+    x2 = rect(1);
+    y2 = rect(2);
+    r_xlength = rect(3);
+    r_ylength = rect(4);
+    r = polyshape([x2, x2, x2+r_xlength-1, x2+r_xlength-1], [y2, y2+r_ylength-1, y2+r_ylength-1, y2]);
+
+    intersection = intersect(s, r);
+    if intersection.NumRegions == 0
+        return;
+    else
+        overlap_percent = area(intersection) / area(r);
+
+        x = min(intersection.Vertices(:,1));
+        y = min(intersection.Vertices(:,2));
+        x_length = max(intersection.Vertices(:,1)) - x + 1;
+        y_length = max(intersection.Vertices(:,2)) - y + 1;
+
+        % put x and y coordinates in sub-image context
+        x = x - x1 + 1;
+        y = y - y1 + 1;
+
+        intersection_points = [x y x_length y_length];
+    end
+end
